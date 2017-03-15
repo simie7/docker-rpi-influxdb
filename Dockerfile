@@ -1,28 +1,29 @@
-#FROM resin/armv7hf-debian:jessie
 FROM resin/rpi-raspbian:jessie
 
-ARG DEBIAN_FRONTEND=noninteractive
-#RUN echo 'debconf debconf/frontend select Noninteractive' | debconf-set-selections
+RUN apt-get update && apt-get install -y \
+    apt-transport-https \
+    curl \
+    --no-install-recommends && \ 
+    curl -sL https://repos.influxdata.com/influxdb.key | sudo apt-key add - source /etc/os-release && \
+    echo "deb https://repos.influxdata.com/debian jessie stable" | sudo tee /etc/apt/sources.list.d/influxdb.list && \
+    apt-get update && apt-get install -y \
+    influxdb=1.2.1-1 \
+    --no-install-recommends && \
+    apt-get remove --auto-remove -y \
+    apt-transport-https && \
+    rm -rf /var/lib/apt/lists/*
 
-RUN set -x && \
-    sudo apt-get update && \
-    sudo apt-get install -y --no-install-recommends apt-transport-https curl ca-certificates && \
-    sudo curl -o /usr/sbin/gosu -fsSL "https://github.com/tianon/gosu/releases/download/1.10/gosu-$(dpkg --print-architecture)" && \
-    sudo chmod +x /usr/sbin/gosu && \
-    curl https://bintray.com/user/downloadSubjectPublicKey?username=bintray | sudo apt-key add - && \
-    echo "deb https://dl.bintray.com/fg2it/deb jessie main" | sudo tee -a /etc/apt/sources.list.d/grafana.list && \
-    sudo apt-get update && \
-    sudo apt-get install -y --no-install-recommends grafana && \
-    sudo apt-get remove -y apt-transport-https curl ca-certificates && \
-    sudo apt-get autoremove -y && \
-    sudo apt-get clean && \
-    sudo rm -rf /var/lib/apt/lists/* && \
-    sudo rm -rf /etc/apt/sources.list.d/grafana.list
+COPY influxdb.conf /etc/influxdb/influxdb.conf
 
-VOLUME ["/var/lib/grafana", "/var/log/grafana", "/etc/grafana"]
+ADD run.sh /run.sh
+RUN chmod +x /*.sh
 
-EXPOSE 3000
+ENV PRE_CREATE_DB **None**
 
-COPY ./run.sh /run.sh
+# HTTP API
+EXPOSE 8086
 
-ENTRYPOINT ["/run.sh"]
+VOLUME ["/data"]
+
+CMD ["/run.sh"]
+

@@ -1,48 +1,59 @@
-#!/bin/bash -e
+#!/bin/bash
 
-: "${GF_PATHS_DATA:=/var/lib/grafana}"
-: "${GF_PATHS_LOGS:=/var/log/grafana}"
-: "${GF_PATHS_PLUGINS:=/var/lib/grafana/plugins}"
+set -m
+CONFIG_FILE="/etc/influxdb/influxdb.conf"
+INFLUX_HOST="localhost"
+INFLUX_API_PORT="8086"
+API_URL="http://${INFLUX_HOST}:${INFLUX_API_PORT}"
 
-chown -R grafana:grafana "$GF_PATHS_DATA" "$GF_PATHS_LOGS"
-chown -R grafana:grafana /etc/grafana
+if [ "${PRE_CREATE_DB}" == "**None**" ]; then
+    unset PRE_CREATE_DB
+fi
 
-if [ ! -z ${GF_AWS_PROFILES+x} ]; then
-  mkdir -p ~grafana/.aws/
-  touch ~grafana/.aws/credentials
+echo "=> Starting InfluxDB ..."
+exec influxd -config=${CONFIG_FILE} &
 
-  for profile in ${GF_AWS_PROFILES}; do
-    access_key_varname="GF_AWS_${profile}_ACCESS_KEY_ID"
-    secret_key_varname="GF_AWS_${profile}_SECRET_ACCESS_KEY"
-    region_varname="GF_AWS_${profile}_REGION"
+# Pre create database on the initiation of the container
+if [ -n "${PRE_CREATE_DB}" ]; then
+    echo "=> About to create the following database: ${PRE_CREATE_DB}"
+    if [ -f "/data/.pre_db_created" ]; then
+        echo "=> Database had been created before, skipping ..."
+    else
+        arr=$(echo ${PRE_CREATE_DB} | tr ";" "\n")
 
-    if [ ! -z "${!access_key_varname}" -a ! -z "${!secret_key_varname}" ]; then
-      echo "[${profile}]" >> ~grafana/.aws/credentials
-      echo "aws_access_key_id = ${!access_key_varname}" >> ~grafana/.aws/credentials
-      echo "aws_secret_access_key = ${!secret_key_varname}" >> ~grafana/.aws/credentials
-      if [ ! -z "${!region_varname}" ]; then
-        echo "region = ${!region_varname}" >> ~grafana/.aws/credentials
-      fi
+        #wait for the startup of influxdb
+        RET=1
+        while [[ RET -ne 0 ]]; do
+            echo "=> Waiting for confirmation of InfluxDB service startup ..."
+            sleep 3
+            curl -k ${API_URL}/ping 2> /dev/null
+            RET=$?
+        done
+        echo ""
+
+        PASS=${INFLUXDB_INIT_PWD:-root}
+        if [ -n "${ADMIN_USER}" ]; then
+          echo "=> Creating admin user"
+          influx -host=${INFLUX_HOST} -port=${INFLUX_API_PORT} -execute="CREATE USER ${ADMIN_USER} WITH PASSWORD '${PASS}' WITH ALL PRIVILEGES"
+          for x in $arr
+          do
+              echo "=> Creating database: ${x}"
+              influx -host=${INFLUX_HOST} -port=${INFLUX_API_PORT} -username=${ADMIN_USER} -password="${PASS}" -execute="create database ${x}"
+              influx -host=${INFLUX_HOST} -port=${INFLUX_API_PORT} -username=${ADMIN_USER} -password="${PASS}" -execute="grant all PRIVILEGES on ${x} to ${ADMIN_USER}"
+          done
+          echo ""
+        else
+          for x in $arr
+          do
+              echo "=> Creating database: ${x}"
+              influx -host=${INFLUX_HOST} -port=${INFLUX_API_PORT} -execute="create database \"${x}\""
+          done
+        fi
+
+        touch "/data/.pre_db_created"
     fi
-  done
-
-  chown grafana:grafana -R ~grafana/.aws
-  chmod 600 ~grafana/.aws/credentials
+else
+    echo "=> No database need to be pre-created"
 fi
 
-if [ ! -z "${GF_INSTALL_PLUGINS}" ]; then
-  OLDIFS=$IFS
-  IFS=','
-  for plugin in ${GF_INSTALL_PLUGINS}; do
-    grafana-cli --pluginsDir "${GF_PATHS_PLUGINS}" plugins install ${plugin}
-  done
-  IFS=$OLDIFS
-fi
-
-exec gosu grafana /usr/sbin/grafana-server      \
-  --homepath=/usr/share/grafana                 \
-  --config=/etc/grafana/grafana.ini             \
-  cfg:default.paths.data="$GF_PATHS_DATA"       \
-  cfg:default.paths.logs="$GF_PATHS_LOGS"       \
-  cfg:default.paths.plugins="$GF_PATHS_PLUGINS" \
-  "$@"
+fg

@@ -1,6 +1,5 @@
-#REPO_TAG=4.1.2
-DOCKER_IMAGE_VERSION=4.1.2
-DOCKER_IMAGE_NAME=eimis/rpi-grafana
+DOCKER_IMAGE_VERSION=1.2.1
+DOCKER_IMAGE_NAME=eimis/rpi-influxdb
 DOCKER_IMAGE_TAGNAME=$(DOCKER_IMAGE_NAME):$(DOCKER_IMAGE_VERSION)
 
 default: build
@@ -17,5 +16,5 @@ test:
 	docker run --rm $(DOCKER_IMAGE_TAGNAME) /bin/echo "Success."
 
 version:
-	docker run --rm $(DOCKER_IMAGE_TAGNAME) grafana-server -v
+	docker run --rm $(DOCKER_IMAGE_TAGNAME) influx -version
 
